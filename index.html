@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Candlestick Chart with Synchronized MACD</title>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@3.6.0/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        #container {
+            width: 800px;
+            height: 400px;
+            margin: auto;
+        }
+        #controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        #countdown {
+            text-align: center;
+            font-size: 24px;
+            margin: 20px 0;
+        }
+        .indicator-checkbox {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label for="timeframe">Select Timeframe:</label>
+        <select id="timeframe">
+            <option value="1">1 Minute</option>
+            <option value="5">5 Minutes</option>
+            <option value="15">15 Minutes</option>
+        </select>
+        <div>
+            <label class="indicator-checkbox"><input type="checkbox" id="smaCheckbox" checked>SMA</label>
+            <label class="indicator-checkbox"><input type="checkbox" id="emaCheckbox" checked>EMA</label>
+            <label class="indicator-checkbox"><input type="checkbox" id="macdCheckbox" checked>MACD</label>
+        </div>
+    </div>
+    <div id="countdown">Next candlestick in: <span id="timer">60</span> seconds</div>
+    <div id="container"></div>
+    <div id="macdContainer" style="height: 200px; width: 800px; margin: auto;"></div>
+    <script>
+        const chart = LightweightCharts.createChart(document.getElementById('container'), {
+            width: 800,
+            height: 400,
+        });
+
+        const candleSeries = chart.addCandlestickSeries({
+            upColor: '#4FFF5C',
+            downColor: '#FF4976',
+            borderUpColor: '#4FFF5C',
+            borderDownColor: '#FF4976',
+            wickUpColor: '#4FFF5C',
+            wickDownColor: '#FF4976',
+        });
+
+        const smaSeries = chart.addLineSeries({ color: 'blue' });
+        const emaSeries = chart.addLineSeries({ color: 'orange' });
+
+        const macdChart = LightweightCharts.createChart(document.getElementById('macdContainer'), {
+            width: 800,
+            height: 200,
+        });
+        const macdSeries = macdChart.addLineSeries({ color: 'green' });
+        const signalSeries = macdChart.addLineSeries({ color: 'red' });
+
+        let timerValue = 60; // Default countdown for 1 minute
+        const timerElement = document.getElementById('timer');
+        let candleUpdateInterval;
+
+        let candles = [];
+        let lastCandle = {
+            time: Math.floor(Date.now() / 1000),
+            open: 100,
+            high: 105,
+            low: 95,
+            close: 100
+        };
+
+        function updateCountdown() {
+            timerElement.innerText = timerValue;
+            if (timerValue > 0) {
+                timerValue--;
+            } else {
+                addNewCandle();
+                clearInterval(candleUpdateInterval); // Clear the candle update interval
+                startCountdown(); // Restart countdown
+            }
+        }
+
+        function getRandomClosePrice(currentClose) {
+            return currentClose + (Math.random() > 0.5 ? Math.random() : -Math.random()) * 2;
+        }
+
+        function addNewCandle() {
+            const newCandle = {
+                time: Math.floor(Date.now() / 1000),
+                open: lastCandle.close,
+                high: Math.max(lastCandle.close, lastCandle.close + Math.random() * 5),
+                low: Math.min(lastCandle.close, lastCandle.close - Math.random() * 5),
+                close: getRandomClosePrice(lastCandle.close)
+            };
+
+            lastCandle = newCandle;
+            candles.push(newCandle);
+            candleSeries.setData(candles);
+            updateIndicators();
+            console.log(newCandle); // Check data in console
+        }
+
+        function updateIndicators() {
+            if (document.getElementById('smaCheckbox').checked) {
+                const sma = calculateSMA(candles, 5); // 5-period SMA
+                smaSeries.setData(sma);
+            } else {
+                smaSeries.setData([]);
+            }
+
+            if (document.getElementById('emaCheckbox').checked) {
+                const ema = calculateEMA(candles, 5); // 5-period EMA
+                emaSeries.setData(ema);
+            } else {
+                emaSeries.setData([]);
+            }
+
+            if (document.getElementById('macdCheckbox').checked) {
+                const macd = calculateMACD(candles, 12, 26, 9); // MACD with default settings
+                drawMACD(macd);
+            } else {
+                macdSeries.setData([]);
+                signalSeries.setData([]);
+            }
+        }
+
+        function calculateSMA(data, period) {
+            const sma = [];
+            for (let i = period - 1; i < data.length; i++) {
+                const sum = data.slice(i - period + 1, i + 1).reduce((acc, candle) => acc + candle.close, 0);
+                sma.push({ time: data[i].time, value: sum / period });
+            }
+            return sma;
+        }
+
+        function calculateEMA(data, period) {
+            const ema = [];
+            let k = 2 / (period + 1);
+            let previousEma = data[0].close; // Start with the first close
+
+            for (let i = 0; i < data.length; i++) {
+                if (i < period - 1) continue; // Skip until we have enough data
+                if (i === period - 1) {
+                    const initialSum = data.slice(0, period).reduce((acc, candle) => acc + candle.close, 0);
+                    previousEma = initialSum / period; // Calculate initial EMA
+                }
+                const currentEma = (data[i].close - previousEma) * k + previousEma;
+                ema.push({ time: data[i].time, value: currentEma });
+                previousEma = currentEma;
+            }
+            return ema;
+        }
+
+        function calculateMACD(data, shortPeriod, longPeriod, signalPeriod) {
+            const macd = { macd: [], signal: [] };
+            const emaShort = calculateEMA(data, shortPeriod);
+            const emaLong = calculateEMA(data, longPeriod);
+
+            for (let i = 0; i < Math.min(emaShort.length, emaLong.length); i++) {
+                const macdValue = emaShort[i + longPeriod - shortPeriod - 1].value - emaLong[i].value;
+                macd.macd.push({ time: data[i + longPeriod - 1].time, value: macdValue });
+            }
+
+            const signalEma = calculateEMA(macd.macd, signalPeriod);
+            for (let i = 0; i < signalEma.length; i++) {
+                macd.signal.push({ time: signalEma[i].time, value: signalEma[i].value });
+            }
+
+            return macd;
+        }
+
+        function drawMACD(macd) {
+            macdSeries.setData(macd.macd);
+            signalSeries.setData(macd.signal);
+        }
+
+        function startCountdown() {
+            const selectedTimeframe = parseInt(document.getElementById('timeframe').value);
+            timerValue = selectedTimeframe * 60; // Convert to seconds
+            timerElement.innerText = timerValue;
+
+            // Start updating the candle's close price every second
+            candleUpdateInterval = setInterval(() => {
+                lastCandle.close = getRandomClosePrice(lastCandle.close);
+                candleSeries.update(lastCandle);
+            }, 1000);
+
+            // Start the countdown
+            setInterval(updateCountdown, 1000);
+        }
+
+        // Add initial candle
+        candles.push(lastCandle);
+        candleSeries.setData(candles);
+
+        // Start with the default timeframe
+        startCountdown();
+
+        // Handle timeframe change
+        document.getElementById('timeframe').addEventListener('change', () => {
+            clearInterval(candleUpdateInterval); // Stop previous updates
+            startCountdown(); // Restart with new timeframe
+        });
+
+        // Handle checkbox changes
+        document.querySelectorAll('input[type=checkbox]').forEach(checkbox => {
+            checkbox.addEventListener('change', updateIndicators);
+        });
+
+        // Synchronize MACD chart with the candle chart
+        chart.subscribeCrosshairMove((param) => {
+            if (!param || !param.time) return;
+            const time = param.time;
+            const macdData = calculateMACD(candles, 12, 26, 9);
+            macdSeries.setData(macdData.macd);
+            signalSeries.setData(macdData.signal);
+        });
+    </script>
+</body>
+</html>
